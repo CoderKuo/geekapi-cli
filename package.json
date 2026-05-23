@@ -1,6 +1,6 @@
 {
   "name": "geekapi-cli",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "GeekAPI 中转站快捷工具：一键检测/下载/配置 Claude Code",
   "type": "module",
   "module": "src/index.ts",
