@@ -5,6 +5,33 @@ import { IS_WIN, IS_MAC, IS_LINUX, run, runStreaming, commandExists } from "./ut
 const NODE_DOWNLOAD_URL = "https://nodejs.org/en/download";
 const BUN_DOWNLOAD_URL = "https://bun.sh";
 const CLAUDE_PACKAGE = "@anthropic-ai/claude-code";
+const NPM_OFFICIAL = "https://registry.npmjs.org";
+const NPM_MIRROR = "https://registry.npmmirror.com";
+
+async function checkRegistry(url: string, timeoutMs = 6000): Promise<boolean> {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const r = await fetch(url, { method: "HEAD", signal: ctrl.signal });
+    clearTimeout(timer);
+    return r.ok || r.status === 405;
+  } catch {
+    return false;
+  }
+}
+
+async function runInstall(
+  manager: "npm" | "bun",
+  registry: string | null,
+): Promise<boolean> {
+  const base =
+    manager === "npm"
+      ? ["npm", "install", "-g", CLAUDE_PACKAGE]
+      : ["bun", "add", "-g", CLAUDE_PACKAGE];
+  const cmd = registry ? [...base, `--registry=${registry}`] : base;
+  p.log.info(`即将运行：${pc.cyan(cmd.join(" "))}`);
+  return runStreaming(cmd);
+}
 
 export async function ensureNodeOrBun(): Promise<{
   manager: "npm" | "bun";
@@ -127,18 +154,55 @@ async function installBun(): Promise<boolean> {
 }
 
 export async function installClaudeCode(manager: "npm" | "bun"): Promise<boolean> {
-  p.log.info(
-    `即将运行：${pc.cyan(
-      manager === "npm" ? `npm install -g ${CLAUDE_PACKAGE}` : `bun add -g ${CLAUDE_PACKAGE}`,
-    )}`,
-  );
-  const cmd =
-    manager === "npm" ? ["npm", "install", "-g", CLAUDE_PACKAGE] : ["bun", "add", "-g", CLAUDE_PACKAGE];
-  const ok = await runStreaming(cmd);
-  if (!ok) {
-    p.log.error("Claude Code 安装失败。可尝试设置 npm 镜像后重试：");
-    p.log.message("  " + pc.cyan("npm config set registry https://registry.npmmirror.com"));
+  const s = p.spinner();
+  s.start("检测 npm 官方源连通性");
+  const officialOk = await checkRegistry(NPM_OFFICIAL);
+  s.stop(officialOk ? pc.green("npm 官方源可达") : pc.yellow("npm 官方源不可达"));
+
+  let registry: string | null = null;
+
+  if (!officialOk) {
+    s.start("检测 npmmirror 国内镜像连通性");
+    const mirrorOk = await checkRegistry(NPM_MIRROR);
+    s.stop(mirrorOk ? pc.green("npmmirror 镜像可达") : pc.red("npmmirror 镜像也不可达"));
+
+    if (!mirrorOk) {
+      p.log.error("两个源都连不上，请检查网络后重试。");
+      return false;
+    }
+
+    const useMirror = await p.confirm({
+      message: `连不上 npm 官方源，切到 ${pc.cyan(NPM_MIRROR)} 镜像重试？`,
+      initialValue: true,
+    });
+    if (p.isCancel(useMirror) || !useMirror) {
+      p.log.warn("已取消。可手动设置后再试：");
+      p.log.message("  " + pc.cyan(`npm config set registry ${NPM_MIRROR}`));
+      return false;
+    }
+    registry = NPM_MIRROR;
+  }
+
+  if (await runInstall(manager, registry)) return true;
+
+  if (registry === NPM_MIRROR) {
+    p.log.error("Claude Code 安装失败。");
     return false;
   }
-  return true;
+
+  p.log.warn("使用官方源安装失败。");
+  const retry = await p.confirm({
+    message: `切到 ${pc.cyan(NPM_MIRROR)} 镜像重试一次？`,
+    initialValue: true,
+  });
+  if (p.isCancel(retry) || !retry) {
+    p.log.message("如需手动切换镜像：");
+    p.log.message("  " + pc.cyan(`npm config set registry ${NPM_MIRROR}`));
+    return false;
+  }
+
+  if (await runInstall(manager, NPM_MIRROR)) return true;
+
+  p.log.error("Claude Code 安装失败（已用国内镜像重试）。");
+  return false;
 }
