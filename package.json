@@ -1,7 +1,7 @@
 {
   "name": "geekapi-cli",
-  "version": "0.1.1",
-  "description": "GeekAPI 中转站快捷工具：一键检测/下载/配置 Claude Code",
+  "version": "0.2.0",
+  "description": "GeekAPI 中转站快捷工具：一键检测/下载/配置 Claude Code 和 Codex",
   "type": "module",
   "module": "src/index.ts",
   "scripts": {

@@ -8,6 +8,7 @@ export interface ToolStatus {
 
 export interface Environment {
   claude: ToolStatus;
+  codex: ToolStatus;
   node: ToolStatus;
   bun: ToolStatus;
   npm: ToolStatus;
@@ -23,11 +24,12 @@ async function check(cmd: string, versionArg = "--version"): Promise<ToolStatus>
 }
 
 export async function detectEnvironment(): Promise<Environment> {
-  const [claude, node, bun, npm] = await Promise.all([
+  const [claude, codex, node, bun, npm] = await Promise.all([
     check("claude"),
+    check("codex"),
     check("node"),
     check("bun"),
     check("npm"),
   ]);
-  return { claude, node, bun, npm };
+  return { claude, codex, node, bun, npm };
 }

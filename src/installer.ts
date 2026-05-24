@@ -5,6 +5,7 @@ import { IS_WIN, IS_MAC, IS_LINUX, run, runStreaming, commandExists } from "./ut
 const NODE_DOWNLOAD_URL = "https://nodejs.org/en/download";
 const BUN_DOWNLOAD_URL = "https://bun.sh";
 const CLAUDE_PACKAGE = "@anthropic-ai/claude-code";
+const CODEX_PACKAGE = "@openai/codex";
 const NPM_OFFICIAL = "https://registry.npmjs.org";
 const NPM_MIRROR = "https://registry.npmmirror.com";
 
@@ -22,12 +23,13 @@ async function checkRegistry(url: string, timeoutMs = 6000): Promise<boolean> {
 
 async function runInstall(
   manager: "npm" | "bun",
+  pkg: string,
   registry: string | null,
 ): Promise<boolean> {
   const base =
     manager === "npm"
-      ? ["npm", "install", "-g", CLAUDE_PACKAGE]
-      : ["bun", "add", "-g", CLAUDE_PACKAGE];
+      ? ["npm", "install", "-g", pkg]
+      : ["bun", "add", "-g", pkg];
   const cmd = registry ? [...base, `--registry=${registry}`] : base;
   p.log.info(`即将运行：${pc.cyan(cmd.join(" "))}`);
   return runStreaming(cmd);
@@ -153,7 +155,11 @@ async function installBun(): Promise<boolean> {
   return false;
 }
 
-export async function installClaudeCode(manager: "npm" | "bun"): Promise<boolean> {
+export async function installNpmPackage(
+  manager: "npm" | "bun",
+  pkg: string,
+  displayName: string,
+): Promise<boolean> {
   const s = p.spinner();
   s.start("检测 npm 官方源连通性");
   const officialOk = await checkRegistry(NPM_OFFICIAL);
@@ -183,10 +189,10 @@ export async function installClaudeCode(manager: "npm" | "bun"): Promise<boolean
     registry = NPM_MIRROR;
   }
 
-  if (await runInstall(manager, registry)) return true;
+  if (await runInstall(manager, pkg, registry)) return true;
 
   if (registry === NPM_MIRROR) {
-    p.log.error("Claude Code 安装失败。");
+    p.log.error(`${displayName} 安装失败。`);
     return false;
   }
 
@@ -201,8 +207,16 @@ export async function installClaudeCode(manager: "npm" | "bun"): Promise<boolean
     return false;
   }
 
-  if (await runInstall(manager, NPM_MIRROR)) return true;
+  if (await runInstall(manager, pkg, NPM_MIRROR)) return true;
 
-  p.log.error("Claude Code 安装失败（已用国内镜像重试）。");
+  p.log.error(`${displayName} 安装失败（已用国内镜像重试）。`);
   return false;
+}
+
+export function installClaudeCode(manager: "npm" | "bun"): Promise<boolean> {
+  return installNpmPackage(manager, CLAUDE_PACKAGE, "Claude Code");
+}
+
+export function installCodex(manager: "npm" | "bun"): Promise<boolean> {
+  return installNpmPackage(manager, CODEX_PACKAGE, "Codex");
 }
