@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { mkdir, readFile, writeFile, copyFile, stat } from "node:fs/promises";
+import { mkdir, readFile, stat } from "node:fs/promises";
+import { atomicWrite, rotateBackup } from "./utils";
 
 export const CLAUDE_DIR = join(homedir(), ".claude");
 export const SETTINGS_PATH = join(CLAUDE_DIR, "settings.json");
@@ -37,21 +38,12 @@ export async function readSettings(): Promise<ClaudeSettings> {
   }
 }
 
-export async function writeSettings(settings: ClaudeSettings): Promise<void> {
-  await mkdir(CLAUDE_DIR, { recursive: true });
-  if (await fileExists(SETTINGS_PATH)) {
-    await copyFile(SETTINGS_PATH, `${SETTINGS_PATH}.bak`);
-  }
-  await writeFile(SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n", "utf8");
-}
-
 export async function applyApiConfig(cfg: ApiConfig): Promise<{
   before: ClaudeSettings;
   after: ClaudeSettings;
   backup: string | null;
 }> {
   const before = await readSettings();
-  const backup = (await fileExists(SETTINGS_PATH)) ? `${SETTINGS_PATH}.bak` : null;
 
   const after: ClaudeSettings = {
     ...before,
@@ -62,7 +54,10 @@ export async function applyApiConfig(cfg: ApiConfig): Promise<{
     },
   };
 
-  await writeSettings(after);
+  await mkdir(CLAUDE_DIR, { recursive: true });
+  const backup = await rotateBackup(SETTINGS_PATH);
+  await atomicWrite(SETTINGS_PATH, JSON.stringify(after, null, 2) + "\n");
+
   return { before, after, backup };
 }
 

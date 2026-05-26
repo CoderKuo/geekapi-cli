@@ -11,10 +11,12 @@ import {
   CODEX_CONFIG_PATH,
   CODEX_AUTH_PATH,
 } from "./codex";
-import { runStreaming } from "./utils";
+import { runStreaming, openUrl } from "./utils";
+import { verifyKey, fetchUsage } from "./health";
 
 const DEFAULT_BASE_URL = "https://www.geek2api.com";
 const DEFAULT_CODEX_BASE_URL = "https://www.geek2api.com";
+const CONSOLE_URL = "https://www.geek2api.com";
 const BRAND = "GeekAPI";
 
 function banner() {
@@ -116,6 +118,8 @@ async function configureClaude(): Promise<void> {
   p.log.success(`已写入 ${pc.cyan(SETTINGS_PATH)}`);
   p.log.message(`${pc.gray("base =")} ${pc.cyan(baseUrl)}`);
   if (result.backup) p.log.message(pc.gray(`原配置已备份到 ${result.backup}`));
+
+  await runHealthCheck(baseUrl, authToken.trim(), "Claude");
 }
 
 async function configureCodexFlow(env: Environment): Promise<void> {
@@ -180,6 +184,8 @@ async function configureCodexFlow(env: Environment): Promise<void> {
   if (result.configBackup) p.log.message(pc.gray(`config.toml 备份到 ${result.configBackup}`));
   if (result.authBackup) p.log.message(pc.gray(`auth.json 备份到 ${result.authBackup}`));
 
+  await runHealthCheck(baseUrl, apiKey.trim(), "Codex");
+
   if (!env.codex.installed) {
     p.log.warn(
       "未在 PATH 检测到 codex 命令。配置文件已写入，如果你已经装过 Codex 可直接使用；否则请安装 Codex CLI 后即可生效。",
@@ -199,6 +205,84 @@ async function configureCodexFlow(env: Environment): Promise<void> {
       }
     }
   }
+}
+
+async function runHealthCheck(
+  baseUrl: string,
+  apiKey: string,
+  label: string,
+): Promise<void> {
+  const s = p.spinner();
+  s.start(`正在验证 ${label} key 是否可用`);
+  const r = await verifyKey(baseUrl, apiKey);
+  if (r.kind === "ok") {
+    s.stop(pc.green(`${label} key 验证通过 ✓`));
+    return;
+  }
+  s.stop(pc.yellow(`${label} key 验证未通过`));
+  p.log.error(r.message);
+  if (r.hint) p.log.message(pc.gray(`提示：${r.hint}`));
+  p.log.message(pc.gray(`控制台：${CONSOLE_URL}`));
+}
+
+async function showUsage(): Promise<void> {
+  const settings = await readSettings();
+  const baseUrl = (settings.env?.ANTHROPIC_BASE_URL as string) ?? DEFAULT_BASE_URL;
+  const claudeKey = (settings.env?.ANTHROPIC_AUTH_TOKEN as string) ?? "";
+
+  const auth = await readCodexAuth();
+  const codexKey = auth?.OPENAI_API_KEY ?? "";
+
+  const candidates: { label: string; key: string }[] = [];
+  if (claudeKey) candidates.push({ label: "Claude Key", key: claudeKey });
+  if (codexKey && codexKey !== claudeKey) {
+    candidates.push({ label: "Codex Key", key: codexKey });
+  }
+
+  if (candidates.length === 0) {
+    p.log.warn("还没配置过 API Key，无法查询余额。");
+    return;
+  }
+
+  let target = candidates[0]!;
+  if (candidates.length > 1) {
+    const choice = await p.select({
+      message: "查哪个 key 的余额？",
+      options: candidates.map((c) => ({
+        value: c.key,
+        label: `${c.label}（${maskToken(c.key)}）`,
+      })),
+    });
+    if (p.isCancel(choice)) return;
+    target = candidates.find((c) => c.key === choice)!;
+  }
+
+  const s = p.spinner();
+  s.start(`查询 ${target.label} 余额`);
+  const r = await fetchUsage(baseUrl, target.key);
+  if (!r.ok) {
+    s.stop(pc.red("查询失败"));
+    p.log.error(r.error ?? "未知错误");
+    p.log.message(pc.gray(`控制台：${CONSOLE_URL}`));
+    return;
+  }
+  s.stop(pc.green("查询成功"));
+  const data = r.data!;
+  console.log("");
+  console.log(`  ${pc.cyan("状态")}     ${data.isValid ? pc.green("有效") : pc.red("已停用")}`);
+  if (data.remaining !== undefined) {
+    console.log(`  ${pc.cyan("剩余")}     ${pc.bold(String(data.remaining))} ${data.unit ?? ""}`);
+  } else {
+    console.log(`  ${pc.gray("(余额字段未识别，原始响应见下)")}`);
+    console.log(pc.gray(`  ${JSON.stringify(data.raw)}`));
+  }
+  console.log("");
+}
+
+async function openConsole(): Promise<void> {
+  const ok = await openUrl(CONSOLE_URL);
+  if (ok) p.log.success(`已在浏览器打开 ${pc.cyan(CONSOLE_URL)}`);
+  else p.log.warn(`打开失败，请手动访问：${pc.cyan(CONSOLE_URL)}`);
 }
 
 async function showCurrent() {
@@ -243,6 +327,8 @@ async function mainMenu(env: Environment) {
         { value: "claude_config", label: "配置 Claude Code（写入 ~/.claude/settings.json）" },
         { value: "codex_config", label: "配置 Codex（写入 ~/.codex/config.toml + auth.json）" },
         { value: "show", label: "查看当前配置" },
+        { value: "usage", label: "查询余额 / 用量" },
+        { value: "console", label: "打开 GeekAPI 控制台" },
         { value: "claude_install", label: "安装 / 升级 Claude Code" },
         { value: "codex_install", label: "安装 / 升级 Codex" },
         { value: "launch_claude", label: "启动 Claude Code" },
@@ -262,6 +348,10 @@ async function mainMenu(env: Environment) {
       await configureCodexFlow(env);
     } else if (action === "show") {
       await showCurrent();
+    } else if (action === "usage") {
+      await showUsage();
+    } else if (action === "console") {
+      await openConsole();
     } else if (action === "claude_install") {
       const runtime = await ensureNodeOrBun();
       if (runtime.ok) await installClaudeCode(runtime.manager);

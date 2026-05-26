@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { mkdir, readFile, writeFile, copyFile, stat } from "node:fs/promises";
+import { mkdir, readFile, stat } from "node:fs/promises";
+import { atomicWrite, rotateBackup } from "./utils";
 
 export const CODEX_DIR = join(homedir(), ".codex");
 export const CODEX_CONFIG_PATH = join(CODEX_DIR, "config.toml");
@@ -45,23 +46,13 @@ export async function applyCodexConfig(cfg: CodexConfig): Promise<{
 }> {
   await mkdir(CODEX_DIR, { recursive: true });
 
-  let configBackup: string | null = null;
-  let authBackup: string | null = null;
+  const configBackup = await rotateBackup(CODEX_CONFIG_PATH);
+  const authBackup = await rotateBackup(CODEX_AUTH_PATH);
 
-  if (await fileExists(CODEX_CONFIG_PATH)) {
-    await copyFile(CODEX_CONFIG_PATH, `${CODEX_CONFIG_PATH}.bak`);
-    configBackup = `${CODEX_CONFIG_PATH}.bak`;
-  }
-  if (await fileExists(CODEX_AUTH_PATH)) {
-    await copyFile(CODEX_AUTH_PATH, `${CODEX_AUTH_PATH}.bak`);
-    authBackup = `${CODEX_AUTH_PATH}.bak`;
-  }
-
-  await writeFile(CODEX_CONFIG_PATH, buildConfigToml(cfg.baseUrl), "utf8");
-  await writeFile(
+  await atomicWrite(CODEX_CONFIG_PATH, buildConfigToml(cfg.baseUrl));
+  await atomicWrite(
     CODEX_AUTH_PATH,
     JSON.stringify({ OPENAI_API_KEY: cfg.apiKey }, null, 2) + "\n",
-    "utf8",
   );
 
   return { configBackup, authBackup };
