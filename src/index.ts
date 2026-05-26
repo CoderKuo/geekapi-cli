@@ -58,29 +58,6 @@ async function ensureClaudeInstalled(env: Environment): Promise<boolean> {
   return true;
 }
 
-async function ensureCodexInstalled(env: Environment): Promise<boolean> {
-  if (env.codex.installed) return true;
-
-  const wantInstall = await p.confirm({
-    message: `Codex 还没装，现在通过 npm 安装 ${pc.cyan("@openai/codex")} 吗？`,
-    initialValue: true,
-  });
-  if (p.isCancel(wantInstall) || !wantInstall) return false;
-
-  const runtime = await ensureNodeOrBun();
-  if (!runtime.ok) {
-    p.log.error("运行时安装未完成，请重新打开本工具。");
-    return false;
-  }
-
-  const ok = await installCodex(runtime.manager);
-  if (!ok) return false;
-
-  p.log.success("Codex 安装完成。");
-  env.codex = (await detectEnvironment()).codex;
-  return true;
-}
-
 async function configureClaude(): Promise<void> {
   const current = await readSettings();
   const currentBase = (current.env?.ANTHROPIC_BASE_URL as string) ?? "";
@@ -141,7 +118,7 @@ async function configureClaude(): Promise<void> {
   if (result.backup) p.log.message(pc.gray(`原配置已备份到 ${result.backup}`));
 }
 
-async function configureCodexFlow(): Promise<void> {
+async function configureCodexFlow(env: Environment): Promise<void> {
   const currentToml = await readCodexConfigToml();
   const currentAuth = await readCodexAuth();
   const currentBase = currentToml ? extractBaseUrl(currentToml) : null;
@@ -202,6 +179,26 @@ async function configureCodexFlow(): Promise<void> {
   p.log.message(`${pc.gray("base =")} ${pc.cyan(baseUrl)}`);
   if (result.configBackup) p.log.message(pc.gray(`config.toml 备份到 ${result.configBackup}`));
   if (result.authBackup) p.log.message(pc.gray(`auth.json 备份到 ${result.authBackup}`));
+
+  if (!env.codex.installed) {
+    p.log.warn(
+      "未在 PATH 检测到 codex 命令。配置文件已写入，如果你已经装过 Codex 可直接使用；否则请安装 Codex CLI 后即可生效。",
+    );
+    const wantInstall = await p.confirm({
+      message: `要现在通过 npm 安装 ${pc.cyan("@openai/codex")} 吗？`,
+      initialValue: false,
+    });
+    if (!p.isCancel(wantInstall) && wantInstall) {
+      const runtime = await ensureNodeOrBun();
+      if (runtime.ok) {
+        const ok = await installCodex(runtime.manager);
+        if (ok) {
+          p.log.success("Codex 安装完成。");
+          env.codex = (await detectEnvironment()).codex;
+        }
+      }
+    }
+  }
 }
 
 async function showCurrent() {
@@ -262,8 +259,7 @@ async function mainMenu(env: Environment) {
     if (action === "claude_config") {
       await configureClaude();
     } else if (action === "codex_config") {
-      await ensureCodexInstalled(env);
-      await configureCodexFlow();
+      await configureCodexFlow(env);
     } else if (action === "show") {
       await showCurrent();
     } else if (action === "claude_install") {
@@ -324,8 +320,7 @@ async function main() {
       await configureClaude();
     }
     if (target === "codex" || target === "both") {
-      const ready = await ensureCodexInstalled(env);
-      if (ready) await configureCodexFlow();
+      await configureCodexFlow(env);
     }
   }
 
